@@ -31,6 +31,8 @@ build::
 		cd $(PYENVSRC) && python setup.py build bdist_wheel --universal ; \
 	)
 	go install -ldflags "-X github.com/pulumi/pulumi/sdk/python/pkg/version.Version=${VERSION}" ${LANGHOST_PKG}
+	cd $(PYENVSRC) && $(PIP) install --user -e .
+	cp ./cmd/pulumi-language-python-exec "$(PULUMI_ROOT)/bin"
 
 lint::
 	( \
@@ -39,12 +41,6 @@ lint::
 	)
 	$(GOMETALINTER) ./cmd/pulumi-language-python/... | sort ; exit $${PIPESTATUS[0]}
 	$(GOMETALINTER) ./pkg/... | sort ; exit $${PIPESTATUS[0]}
-
-install::
-	cd $(PYENVSRC) && $(PIP) install --user -e .
-	cp ./cmd/pulumi-language-python-exec "$(PULUMI_BIN)"
-	GOBIN=$(PULUMI_BIN) go install \
-		  -ldflags "-X github.com/pulumi/pulumi/sdk/python/pkg/version.Version=${VERSION}" ${LANGHOST_PKG}
 
 test_fast::
 	$(PYTHON) -m unittest discover -s lib/test
