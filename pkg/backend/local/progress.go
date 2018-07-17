@@ -221,6 +221,21 @@ func (display *ProgressDisplay) writeBlankLine() {
 	display.writeSimpleMessage(" ")
 }
 
+type Display interface {
+	processTick()
+	processNormalEvent(event engine.Event)
+}
+
+type BaseDisplay struct {
+	// What tick we're currently on.  Used to determine the number of ellipses to concat to
+	// a status message to help indicate that things are still working.
+	currentTick int
+}
+
+func (display *BaseDisplay) baseDisplayProcessTick() {
+	display.currentTick++
+}
+
 // DisplayProgressEvents displays the engine events with docker's progress view.
 func DisplayProgressEvents(
 	action string, events <-chan engine.Event,
@@ -237,6 +252,21 @@ func DisplayProgressEvents(
 	// from to display to the console.
 	progressOutput := make(chan Progress)
 
+	_, stdout, _ := term.StdStreams()
+
+	terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+	contract.IgnoreError(err)
+
+	var display Display
+	if opts.IsInteractive {
+		display = createInteractiveDisplay(terminalWidth)
+	} else {
+		display = createNonInteractiveDisplay(spinner)
+	}
+
+	// display.isTerminal = opts.IsInteractive
+	// display.terminalWidth = terminalWidth
+
 	display := &ProgressDisplay{
 		opts:                   opts,
 		progressOutput:         progressOutput,
@@ -252,16 +282,8 @@ func DisplayProgressEvents(
 
 	// display.writeSimpleMessage(fmt.Sprintf("Max suffix length %v", display.maxSuffixLength))
 
-	_, stdout, _ := term.StdStreams()
-
-	terminalWidth, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-	contract.IgnoreError(err)
-
-	display.isTerminal = opts.IsInteractive
-	display.terminalWidth = terminalWidth
-
 	go func() {
-		display.processEvents(ticker, events)
+		processEvents(display, ticker, events)
 
 		// no more progress events from this point on.  By closing the pipe, this will then cause
 		// DisplayJSONMessagesToStream to finish once it processes the last message is receives from
@@ -269,7 +291,7 @@ func DisplayProgressEvents(
 		close(progressOutput)
 	}()
 
-	DisplayProgressToStream(progressOutput, stdout, display.isTerminal)
+	DisplayProgressToStream(progressOutput, stdout, opts.IsInteractive)
 
 	ticker.Stop()
 
@@ -767,20 +789,20 @@ func splitIntoDisplayableLines(msg string) []string {
 	return lines
 }
 
-func (display *ProgressDisplay) processTick() {
-	// Got a tick.  Update the progress display if we're in a terminal.  If we're not,
-	// print a hearbeat message every 10 seconds after our last output so that the user
-	// knows something is going on.  This is also helpful for hosts like jenkins that
-	// often timeout a process if output is not seen in a while.
-	display.currentTick++
+// func (display *ProgressDisplay) processTick() {
+// 	// Got a tick.  Update the progress display if we're in a terminal.  If we're not,
+// 	// print a hearbeat message every 10 seconds after our last output so that the user
+// 	// knows something is going on.  This is also helpful for hosts like jenkins that
+// 	// often timeout a process if output is not seen in a while.
+// 	display.currentTick++
 
-	if display.isTerminal {
-		display.refreshAllRowsIfInTerminal()
-	} else {
-		// Update the spinner to let the user know that that work is still happening.
-		display.nonInteractiveSpinner.Tick()
-	}
-}
+// 	if display.isTerminal {
+// 		display.refreshAllRowsIfInTerminal()
+// 	} else {
+// 		// Update the spinner to let the user know that that work is still happening.
+// 		display.nonInteractiveSpinner.Tick()
+// 	}
+// }
 
 func (display *ProgressDisplay) getRowForURN(urn resource.URN, metadata *engine.StepEventMetadata) ResourceRow {
 	// If there's already a row for this URN, return it.
@@ -823,7 +845,8 @@ func (display *ProgressDisplay) getRowForURN(urn resource.URN, metadata *engine.
 	return row
 }
 
-func (display *ProgressDisplay) processNormalEvent(event engine.Event) {
+// Returns true if processing should continue and output should be displayed to the user.
+func (display *BaseDisplay) baseProcessNormalEvent(event engine.Event) bool {
 	switch event.Type {
 	case engine.PreludeEvent:
 		// A prelude event can just be printed out directly to the console.
@@ -833,9 +856,9 @@ func (display *ProgressDisplay) processNormalEvent(event engine.Event) {
 		payload := event.Payload.(engine.PreludeEventPayload)
 		display.isPreview = payload.IsPreview
 		display.writeSimpleMessage(renderPreludeEvent(payload, display.opts))
-		return
+		return false
 	case engine.SummaryEvent:
-		// keep track of the summar event so that we can display it after all other
+		// keep track of the summary event so that we can display it after all other
 		// resource-related events we receive.
 		payload := event.Payload.(engine.SummaryEventPayload)
 		display.summaryEventPayload = &payload
@@ -952,7 +975,7 @@ func (display *ProgressDisplay) ensureHeaderAndStackRows() {
 	display.resourceRows = append(display.resourceRows, stackRow)
 }
 
-func (display *ProgressDisplay) processEvents(ticker *time.Ticker, events <-chan engine.Event) {
+func processEvents(display Display, ticker *time.Ticker, events <-chan engine.Event) {
 	// Main processing loop.  The purpose of this func is to read in events from the engine
 	// and translate them into Status objects and progress messages to be presented to the
 	// command line.
