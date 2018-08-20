@@ -336,7 +336,7 @@ var (
 // in the Pulumi Console).
 func isPreconfiguredEmptyStack(
 	url string,
-	templateConfig map[config.Key]workspace.ProjectTemplateConfigValue,
+	templateConfig map[string]workspace.ProjectTemplateConfigValue,
 	stackConfig config.Map,
 	snap *deploy.Snapshot) bool {
 
@@ -368,7 +368,13 @@ func isPreconfiguredEmptyStack(
 
 	// Can stackConfig satisfy the config requirements of templateConfig?
 	for templateKey, templateVal := range templateConfig {
-		stackVal, ok := stackConfig[templateKey]
+		parsedTemplateKey, parseErr := parseConfigKey(templateKey)
+		if err != nil {
+			contract.IgnoreError(err)
+			return false
+		}
+
+		stackVal, ok := stackConfig[parsedTemplateKey]
 		if !ok {
 			return false
 		}

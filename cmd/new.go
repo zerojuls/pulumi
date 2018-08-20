@@ -433,13 +433,13 @@ func chooseTemplate(templates []workspace.Template, opts backend.DisplayOptions)
 // parseConfig parses the config values passed via command line flags.
 // These are passed as `-c aws:region=us-east-1 -c foo:bar=blah` and end up
 // in configArray as ["aws:region=us-east-1", "foo:bar=blah"].
-// This function converts the array into a config.Map.
-func parseConfig(configArray []string) (config.Map, error) {
-	configMap := make(config.Map)
+func parseConfig(configArray []string) (map[string]config.Value, error) {
+	configMap := make(map[string]config.Value)
 	for _, c := range configArray {
 		kvp := strings.SplitN(c, "=", 2)
 
-		key, err := config.ParseKey(kvp[0])
+		// Parse the key to ensure there are no parse errors.
+		key, err := parseConfigKey(kvp[0])
 		if err != nil {
 			return nil, err
 		}
@@ -449,7 +449,9 @@ func parseConfig(configArray []string) (config.Map, error) {
 			value = config.NewValue(kvp[1])
 		}
 
-		configMap[key] = value
+		// We use the raw string instead of the parsed key, as we
+		// want to allow project keys that don't have a delimiter.
+		configMap[kvp[0]] = value
 	}
 	return configMap, nil
 }
@@ -460,8 +462,8 @@ func parseConfig(configArray []string) (config.Map, error) {
 // value when prompting instead of the default value specified in templateConfig.
 func promptForConfig(
 	stack backend.Stack,
-	templateConfig map[config.Key]workspace.ProjectTemplateConfigValue,
-	commandLineConfig config.Map,
+	templateConfig map[string]workspace.ProjectTemplateConfigValue,
+	commandLineConfig map[string]config.Value,
 	stackConfig config.Map,
 	yes bool,
 	opts backend.DisplayOptions) (config.Map, error) {
